@@ -19,13 +19,24 @@ VdlpitchAudioProcessor::VdlpitchAudioProcessor()
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
-                       )
+                       ), mAPVTS (*this, nullptr, "PARAMS", createParams())
 #endif
 {
 }
 
+
 VdlpitchAudioProcessor::~VdlpitchAudioProcessor()
 {
+}
+//==============================================================================
+
+juce::AudioProcessorValueTreeState::ParameterLayout VdlpitchAudioProcessor::createParams()
+{
+    std::vector <std::unique_ptr <juce::RangedAudioParameter> > params;
+    
+    params.push_back (std::make_unique<juce::AudioParameterInt> ("TIME", "Time", 0, 1900, 0) );
+    
+    return { params.begin(), params.end() };
 }
 
 //==============================================================================
@@ -94,18 +105,20 @@ void VdlpitchAudioProcessor::changeProgramName (int index, const juce::String& n
 void VdlpitchAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     
-    const int numInputChannels = getTotalNumInputChannels();
-    
-    
-    // Access to two seconds of the audio buffer:
-    const int delayBufferSize = 2 * (sampleRate + samplesPerBlock); //add the buffer length to the sample rate for safety, in case you get too close to the original position
+    previousDelayMS = mAPVTS.getRawParameterValue("TIME")->load();
     
     mSampleRate = sampleRate;
     
-    //DBG(delayBufferSize);
+    const int numInputChannels = getTotalNumInputChannels();
     
     // [2] Set size of the delay buffer:
+    const int delayBufferSize = 2.0 * (sampleRate + samplesPerBlock); //2 second buffer
+    
     mDelayBuffer.setSize(numInputChannels, delayBufferSize);
+    
+    mDelayBuffer.clear();
+    
+    
 }
 
 void VdlpitchAudioProcessor::releaseResources()
@@ -153,72 +166,91 @@ void VdlpitchAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
     {
-        
-        
-        
-        // [3] Create read pointers:
-        
+        // [3] Create read pointers into our buffers.
         const float* bufferData = buffer.getReadPointer(channel);
         const float* delayBufferData = mDelayBuffer.getReadPointer(channel);
         
-        // [4] Copy data from main buffer to delay buffer:
+        //fillDBuffer does circular buffer stuff
         fillDelayBuffer(channel, bufferLength, delayBufferLength, bufferData, delayBufferData);
-        getFromDelayBuffer(buffer, channel, bufferLength, delayBufferLength, bufferData, delayBufferData);
+        
+        //[maybe 10?] call getFromDelayBuffer to copy data from delayBuffer to regular buffer (function unfinished)
+        getFromDelayBuffer (buffer, channel, bufferLength, delayBufferLength, bufferData, delayBufferData);
     }
     
-    //[5] Advance write position – the first time it copies 0-511 values, and the next time we want to start at 512.
+    // [5] After copying a full buffer's samples into our delay buffer (512 samps), we want to INCREMENT THE WRITEPOSITION by the bufferLength
     mWritePosition += bufferLength;
-    // [6] Wrap around when you reach the end of the delay buffer:
+    // [6] Wrap around when we get to the end of our delayBuffer, so that when our writePosition exceeds the delayBufferLength, it starts writing from zero again.
     mWritePosition %= delayBufferLength;
     
-    //
+    
     
     
 }
 
 void VdlpitchAudioProcessor::fillDelayBuffer (int channel, const int bufferLength, const int delayBufferLength, const float* bufferData, const float* delayBufferData)
 {
-    // Check that delay buffer length is greater than the buffer length + write position.
-    
-    
-    if (delayBufferLength > bufferLength + mWritePosition)
+    // [4b] Copy the data from main buffer to delay buffer
+    // Check that our delayBufferLength is greater than bufferLength + mWritePosition. This will be the case most of the time, but not when the writePosition reaches a certain point
+    if (delayBufferLength >= bufferLength + mWritePosition)
     {
-        mDelayBuffer.copyFromWithRamp(channel, mWritePosition, bufferData, bufferLength, 0.8, 0.8);
-        
+        //mDelayBuffer.copyFromWithRamp(<#int destChannel#>, <#int destStartSample#>, <#const float *source#>, <#int numSamples#>, <#float startGain#>, <#float endGain#>)
+        mDelayBuffer.copyFromWithRamp (channel, mWritePosition, bufferData, bufferLength, 0.8, 0.8);
     } else {
-        const int bufferRemaining = delayBufferLength - mWritePosition; //covers the remaining values in the delayBuffer.
+        //If delayBufferLength !> bufferLength + mWritePosition, we don't wanna copy a full bufffer's worth, only how many samples are left to fill in our delayBuffer
+        const int delayBufferRemaining = delayBufferLength - mWritePosition;
         
-        // Copy remaining samples
-        mDelayBuffer.copyFromWithRamp(channel, mWritePosition, bufferData, bufferRemaining, 0.8, 0.8);
+        mDelayBuffer.copyFromWithRamp (channel, mWritePosition, bufferData, delayBufferRemaining, 0.8, 0.8);
+        // [4c] We're at the end of our delayBuffer now. Keep copying, but our writePosition will be 0 now. Also, since we didn't copy the whole buffer last time, we need to make up for that.
         
-        // Set delayBuffer back to copy from the beginning of the next chunk of bufferData:
+        // Copy the leftover bit from the buffer, by adding it to bufferData. And the amount of samples we want to copy here is the leftover
+        //mDelayBuffer.copyFromWithRamp (channel, 0, bufferData + delayBufferRemaining, bufferLength - delayBufferRemaining, 0.8, 0.8);
+        mDelayBuffer.copyFromWithRamp (channel, 0, bufferData + delayBufferRemaining, bufferLength - delayBufferRemaining, 0.8, 0.8);
         
-        // Delay buffer is now filled, so go back to the beginning of the delayBuffer and start overwriting values.
-        mDelayBuffer.copyFromWithRamp(channel, 0, bufferData, bufferLength - bufferRemaining, 0.8, 0.8);
     }
+    
+
     
 }
 
 void VdlpitchAudioProcessor::getFromDelayBuffer (juce::AudioBuffer<float>& buffer, int channel, const int bufferLength, const int delayBufferLength, const float* bufferData, const float* delayBufferData)
 {
-    int delayTime = 500; //ms
+    // [7] Need a delay time in MS
     
-    // Create a read position
-    const int readPosition = static_cast<int> (delayBufferLength + mWritePosition - (mSampleRate * delayTime / 1000)) % delayBufferLength; // Would be half a second, 22050 samples.
+    float currentDelayMS = mAPVTS.getRawParameterValue("TIME")->load();
     
-    // Is there enough space in the delayBuffer for us not to go off the edge?
-    if (delayBufferLength > bufferLength + readPosition)
+    //====
+    if (currentDelayMS == previousDelayMS)
     {
-        // Add samples to our buffer FROM our delayed buffer:
-        buffer.addFrom(channel, 0, delayBufferData + readPosition, bufferLength);
-    } else {
-        const int bufferRemaining = delayBufferLength - readPosition;
+        //call a set delay time function
         
-        buffer.addFrom(channel, 0, delayBufferData + readPosition, bufferRemaining);
-        buffer.addFrom(channel, bufferRemaining, delayBufferData, bufferLength - bufferRemaining);
+    } else {
+        //interpolate
         
     }
     
+    //===
+    
+    float delaySamps = mSampleRate * (delayMS) / 1000;
+    // Create a read position. We want to be able to go back in time into our delay buffer and grab audio data.
+    //const int readPosition = static_cast<int> ( (delayBufferLength + mWritePosition) - delaySamps) % delayBufferLength;
+    
+    const int readPosition = static_cast<int> (delayBufferLength + mWritePosition - (delaySamps)) % delayBufferLength;
+    
+    // [8] Now we want to add a signal from our delayBuffer to our regular buffer. We need to do some checks first.
+    
+    if (delayBufferLength > bufferLength + readPosition)
+    {
+        // If statement checks if there are enough values in the delay buffer.
+        // [9] Add from delayBuffer to buffer
+        buffer.addFrom (channel, 0, delayBufferData + readPosition, bufferLength);
+    } else {
+        //how much space left in buffer?
+        const int bufferRemaining = delayBufferLength - readPosition;
+        buffer.addFrom (channel, 0, delayBufferData + readPosition, bufferRemaining);
+        
+        buffer.addFrom (channel, bufferRemaining, delayBufferData, bufferLength - bufferRemaining);
+        
+    }
 }
 
 //==============================================================================
@@ -245,6 +277,10 @@ void VdlpitchAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // You should use this method to restore your parameters from this memory block,
     // whose contents will have been created by the getStateInformation() call.
 }
+//==============================================================================
+
+
+
 
 //==============================================================================
 // This creates new instances of the plugin..
@@ -252,3 +288,4 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new VdlpitchAudioProcessor();
 }
+

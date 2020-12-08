@@ -13,9 +13,18 @@
 VdlpitchAudioProcessorEditor::VdlpitchAudioProcessorEditor (VdlpitchAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    // Make sure that before the constructor has finished, you've set the
-    // editor's size to whatever you need it to be.
+    dTimeSlider.setSliderStyle (juce::Slider::SliderStyle::RotaryVerticalDrag);
+    //setTextBoxStyle
+    //dTimeSlider.setRange (0, 2000, 1);
+    addAndMakeVisible (dTimeSlider);
+    
+    dTimeAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (audioProcessor.getAPVTS(), "TIME", dTimeSlider);
+    
     setSize (400, 300);
+    
+    
+    
+    
 }
 
 VdlpitchAudioProcessorEditor::~VdlpitchAudioProcessorEditor()
@@ -35,6 +44,5 @@ void VdlpitchAudioProcessorEditor::paint (juce::Graphics& g)
 
 void VdlpitchAudioProcessorEditor::resized()
 {
-    // This is generally where you'll want to lay out the positions of any
-    // subcomponents in your editor..
+    dTimeSlider.setBoundsRelative (0.2, 0.2, 0.6, 0.6);
 }

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "Phasor.h"
 
 //==============================================================================
 /**
@@ -56,16 +57,24 @@ public:
     void fillDelayBuffer (int channel, const int bufferLength, const int delayBufferLength, const float* bufferData, const float* delayBufferData);
     
     void getFromDelayBuffer (juce::AudioBuffer<float>& buffer, int channel, const int bufferLength, const int delayBufferLength, const float* bufferData, const float* delayBufferData);
+    
+    juce::AudioProcessorValueTreeState& getAPVTS() { return mAPVTS; }
+    
 
 private:
     
     // [1] Create another audio buffer
     juce::AudioBuffer<float> mDelayBuffer; //m denotes member variable
     
+    // [4a] Create a write position variable, and initialise it straight up
     int mWritePosition { 0 };
     
     int mSampleRate { 44100 };
     
+    juce::AudioProcessorValueTreeState mAPVTS;
+    juce::AudioProcessorValueTreeState::ParameterLayout createParams();
+    
+    float previousDelayMS;
     
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VdlpitchAudioProcessor)
