@@ -1,6 +1,6 @@
 ## Variable Delay Line Pitch-Shifter
 
-### A non-fft pitch-shifter VST plugin, produced within the JUCE framework
+### A non-fft pitch-shifter VST plugin, made with JUCE
 
 This audio effects plugin will use variable delay lines and cosine waves to offer a wide range of unearthly sound design opportunities.
 
